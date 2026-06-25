@@ -1,0 +1,97 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-service
+  namespace: nagp-k8s
+  labels:
+    app: nagp-assignment
+    tier: api
+spec:
+  replicas: 4
+  selector:
+    matchLabels:
+      app: nagp-assignment
+      tier: api
+  # Rolling update: replace pods one at a time, zero downtime
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1        # one extra pod during rollout
+      maxUnavailable: 1  # at most one pod down at a time
+  template:
+    metadata:
+      labels:
+        app: nagp-assignment
+        tier: api
+    spec:
+      containers:
+        - name: api-service
+          # Replace <YOUR_DOCKERHUB_USERNAME> before deploying
+          image: popeye94/k8s-api-service:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 3000
+              name: http
+          env:
+            # Database connection config from ConfigMap
+            - name: DB_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: DB_HOST
+            - name: DB_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: DB_PORT
+            - name: DB_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: DB_NAME
+            - name: APP_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: APP_PORT
+            # Credentials from Secret (password never in plain text)
+            - name: DB_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: db-credentials
+                  key: DB_USERNAME
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: db-credentials
+                  key: DB_PASSWORD
+          # FinOps: right-sized based on observed idle + peak metrics
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "250m"
+              memory: "256Mi"
+          # Self-healing: pod is killed and replaced if /health stops responding
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 3
+          # Traffic is only routed after DB connection is verified
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 3
+          # Graceful shutdown: SIGTERM triggers pool.end() in server.js
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sh", "-c", "sleep 5"]
+      terminationGracePeriodSeconds: 30

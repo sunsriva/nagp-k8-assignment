@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-service
+  namespace: nagp-k8s
+  labels:
+    app: nagp-assignment
+    tier: database
+spec:
+  # ClusterIP = accessible only within the cluster (not exposed externally)
+  type: ClusterIP
+  selector:
+    app: nagp-assignment
+    tier: database
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+      protocol: TCP

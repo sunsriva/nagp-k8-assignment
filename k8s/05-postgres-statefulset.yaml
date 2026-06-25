@@ -1,0 +1,86 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: nagp-k8s
+  labels:
+    app: nagp-assignment
+    tier: database
+spec:
+  serviceName: postgres-service
+  replicas: 1
+  # OnDelete: pods only update when manually deleted — DB tier has no rolling-update requirement
+  updateStrategy:
+    type: OnDelete
+  selector:
+    matchLabels:
+      app: nagp-assignment
+      tier: database
+  template:
+    metadata:
+      labels:
+        app: nagp-assignment
+        tier: database
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:15-alpine
+          ports:
+            - containerPort: 5432
+              name: postgres
+          env:
+            # Database name from ConfigMap
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: DB_NAME
+            # Credentials from Secret (never plain-text in YAML)
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: db-credentials
+                  key: DB_USERNAME
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: db-credentials
+                  key: DB_PASSWORD
+            # Use a subdirectory so the PVC mount point itself can be non-empty
+            # (avoids "directory is not empty" init failure on many storage classes)
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            # Persistent data directory
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+            # Init SQL runs once when the data directory is first created
+            - name: init-sql
+              mountPath: /docker-entrypoint-initdb.d
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          livenessProbe:
+            exec:
+              # Shell form required — exec probe commands do not go through K8s variable substitution
+              command: ["sh", "-c", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"]
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 5
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"]
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 3
+      volumes:
+        - name: postgres-data
+          persistentVolumeClaim:
+            claimName: postgres-pvc
+        - name: init-sql
+          configMap:
+            name: postgres-init-sql
