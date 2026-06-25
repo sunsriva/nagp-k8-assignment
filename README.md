@@ -1,13 +1,27 @@
 # NAGP 2026 — Kubernetes, DevOps & FinOps Assignment
 
+## About This Project
+
+This project is a cloud-native **Product Catalogue API** built with **Node.js + Express** and backed by **PostgreSQL**. It demonstrates a production-grade Kubernetes deployment on **AWS EKS** with the following capabilities:
+
+- **REST API** — exposes endpoints to list and fetch products stored in a relational database
+- **Containerised** — packaged as a Docker image (multi-stage Alpine build, non-root user) and published to Docker Hub
+- **Kubernetes-native** — runs inside a dedicated namespace with ConfigMaps, Secrets, PVC, StatefulSet, Deployment, ClusterIP Services, Ingress, and HPA all wired together
+- **Auto-scaling** — HPA scales the API tier between 2 and 6 pods based on CPU (60%) and memory (70%) utilisation
+- **Self-healing** — Kubernetes restarts crashed pods automatically; PostgreSQL data survives pod restarts via a persistent EBS volume
+- **Zero-downtime deployments** — RollingUpdate strategy keeps the API available while new versions roll out
+- **FinOps** — right-sized resource requests/limits, Alpine base images, and HPA scale-down stabilisation to minimise AWS cost
+
+---
+
 ## Quick Links
 
 | Item | URL |
 |------|-----|
-| Source code repository | `<YOUR_GITHUB_REPO_URL>` |
+| Source code repository | `https://github.com/sunsriva/nagp-k8-assignment.git` |
 | Docker Hub image | `https://hub.docker.com/r/popeye94/k8s-api-service` |
 | Live API — Products | `http://a1e5203058aee4d77a0aa142d9540791-141822963.ap-south-1.elb.amazonaws.com/api/products` |
-| Screen recording | `<LINK_TO_RECORDING>` |
+| Screen recording | `https://drive.google.com/file/d/1tyZfmKOTCWPmI8V3FUFRAVzDiXbnf-cJ/view?usp=drive_link` |
 
 ---
 
@@ -826,52 +840,3 @@ eksctl delete cluster \
 # Verify deletion in AWS Console → EKS and CloudFormation
 ```
 
----
-
-## Comprehensive Documentation
-
-### Requirement Understanding
-
-The assignment requires a two-tier Kubernetes deployment:
-1. **Service API Tier** — a stateless REST API (Node.js/Express) that connects to the database, exposes product data via HTTP, supports rolling deployments, auto-scaling via HPA, and self-healing via liveness probes.
-2. **Database Tier** — a stateful PostgreSQL instance with a seeded `products` table, persistent storage via EBS PVC, internal-only access, and automatic recovery via StatefulSet.
-
-All sensitive configuration (passwords) must be stored in Kubernetes Secrets. Non-sensitive DB connection parameters must be externalised via ConfigMaps. The two tiers must communicate via Service DNS names — never raw Pod IPs. External access must be through an Ingress resource.
-
-### Assumptions
-
-- AWS account is used with ap-south-1 (Mumbai) region.
-- `t3.small` instance type is used (account is restricted to free-tier eligible instance types; `t3.medium` was rejected by account-level policy).
-- 3 worker nodes are used instead of 2 to provide enough scheduling headroom for 4 API pods + 1 DB pod across nodes.
-- EBS CSI Driver addon must be installed manually on EKS 1.23+ for PVC provisioning (in-tree EBS driver deprecated).
-- Docker image is built for `linux/amd64` explicitly because the development machine uses Apple Silicon (ARM64) and EKS nodes run x86_64.
-- The Ingress has no `host` restriction so the API is accessible directly via the Load Balancer DNS hostname without DNS configuration.
-- The 7 seed records are inserted on first PostgreSQL startup only; the `ON CONFLICT DO NOTHING` clause prevents duplicate inserts if the init script is re-run.
-
-### Solution Overview
-
-**Tech Stack:** Node.js 18 + Express 4 + `pg` (with built-in connection Pool)
-**Database:** PostgreSQL 15 Alpine
-**Platform:** AWS EKS 1.34 (ap-south-1), 3 × t3.small managed nodes
-
-The API service reads all configuration from environment variables injected by Kubernetes. Database connection parameters (host, port, db name) come from a ConfigMap; credentials come from a Secret. A `pg.Pool` with `max: 10` connections handles concurrent requests efficiently without connection exhaustion.
-
-PostgreSQL runs as a StatefulSet (one replica) with a 1 Gi EBS-backed PVC. An init SQL script (mounted from a ConfigMap at `/docker-entrypoint-initdb.d/`) creates the `products` table and inserts 7 rows on the first startup. Subsequent restarts reattach the same PVC and skip initialisation.
-
-The API Deployment uses `RollingUpdate` strategy (`maxSurge: 1, maxUnavailable: 1`), liveness probe on `/health`, and readiness probe on `/ready` (which performs a live `SELECT 1` against the DB). The HPA monitors CPU and memory utilisation and scales between 2 and 6 replicas. NGINX Ingress routes external traffic through an AWS Classic Load Balancer.
-
-### Justification for Resources Utilized
-
-| Resource | Justification |
-|----------|---------------|
-| **Node.js 18 + Alpine** | Lightweight runtime; Alpine reduces image size from ~900 MB to ~60 MB, lowering registry costs and pull times |
-| **PostgreSQL 15** | Production-grade RDBMS with native K8s support; stable persistence via EBS PVC |
-| **StatefulSet for DB** | Provides stable network identity (`postgres-0`) and ordered pod lifecycle — mandatory for databases |
-| **Deployment for API** | Stateless service; Deployment enables rolling updates and self-healing without ordered pod management |
-| **ClusterIP for DB** | Most restrictive service type — DB is unreachable from outside the cluster by design |
-| **NGINX Ingress** | Single external entry point; automatically provisions AWS Load Balancer; supports path-based routing |
-| **HPA (autoscaling/v2)** | Dual-metric scaling (CPU + memory) is more robust than single-metric; v2 API supports configurable stabilization windows to prevent flapping |
-| **EBS gp2 PVC (1 Gi)** | Minimum viable size for seed data and WAL logs; can be expanded without downtime on EKS |
-| **Kubernetes Secret** | Base64-encoded credentials separated from application code and ConfigMap; prevents plaintext passwords in any YAML file |
-| **ConfigMap** | Externalises DB connection config so it can change without rebuilding the Docker image |
-| **Multi-stage Dockerfile** | Separates build-time (npm ci) from runtime — production image contains only `node_modules` and source, no build tools |
